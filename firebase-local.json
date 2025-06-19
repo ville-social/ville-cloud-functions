@@ -1,0 +1,15 @@
+{
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs18"
+  },
+
+  "hosting": {
+    "public": "web",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      { "source": "/event/**", "function": "eventMeta" },
+      { "source": "/**", "destination": "/index.html" }
+    ]
+  }
+}
