@@ -47,9 +47,9 @@ exports.processPreviewAssets = functions
   .region('us-central1')
   .runWith({
     memory        : '2GB',
-    timeoutSeconds: 540,     // 9 min (v1 limit) – plenty for 1.5 s clip
-    minInstances  : 1,       // keeps one warm instance (~$7 / month)
-    maxInstances  : 3
+    timeoutSeconds: 120,     // 2 minutes is plenty for 5s -> 2.5s conversion
+    minInstances  : 1,       // keeps one warm instance
+    maxInstances  : 10      // increased from 3 to handle more concurrent requests
   })
   .firestore
   .document('events/{eventId}')
@@ -63,6 +63,9 @@ exports.processPreviewAssets = functions
       before.event_video !== after.event_video ||
       !(after.event_preview_vid && after.event_preview_image);
     if (!needsPreview) return null;
+
+    console.log(`[processPreviewAssets] Starting preview generation for event ${eventId}`);
+    console.log(`[processPreviewAssets] Event title: ${after.event_title}`);
 
     await ensureFfmpeg();
 
@@ -87,19 +90,28 @@ exports.processPreviewAssets = functions
       `[bg][lg]overlay=(W-w)/2:(H-h)/2`;
 
     // MP4 trailer (≈2.5 s @ 10 fps)
+    console.log(`[processPreviewAssets] Starting FFmpeg conversion: 2.5s @ 360x640 (9:16)`);
+    const startTime = Date.now();
+    
     await new Promise((ok, bad) =>
       spawn(LOCAL_FFMPEG, [
-        '-t', '2.5',            // length
-        '-i', mp4In,
-        '-i', logo,
-        '-r', '10',
+        '-ss', '0',             // start at beginning
+        '-t', '2.5',            // limit input to 2.5 seconds
+        '-i', mp4In,            // input video (only first 2.5s will be read)
+        '-i', logo,             // logo overlay
+        '-t', '2.5',            // also limit output to 2.5 seconds (redundant but safe)
+        '-r', '10',             // 10 fps
         '-filter_complex', filter,
         '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '28',
         '-pix_fmt', 'yuv420p',
+        '-an',                  // no audio
         '-y', mp4Out
       ], { stdio: 'inherit' })
       .on('exit', code => code ? bad(new Error(`ffmpeg-mp4 exit ${code}`)) : ok())
     );
+    
+    const processingTime = Date.now() - startTime;
+    console.log(`[processPreviewAssets] FFmpeg completed in ${processingTime}ms`);
 
     // JPG thumbnail (quality 4 ≈ 100–150 kB)
     await new Promise((ok, bad) =>
