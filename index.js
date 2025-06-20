@@ -248,3 +248,207 @@ exports.eventMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
     return res.redirect(302, '/');
   }
 });
+
+/* ─────────────────────────────────────────────────────────────
+   4. userMeta – Handle deep linking for user profiles /u/
+   ───────────────────────────────────────────────────────────── */
+exports.userMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
+  try {
+    // Extract username from path
+    let username = '';
+    if (req.path.includes('/u/')) {
+      username = req.path.split('/u/')[1]?.split('/')[0] || '';
+    } else if (req.originalUrl.includes('/u/')) {
+      username = req.originalUrl.split('/u/')[1]?.split('/')[0] || '';
+    }
+    
+    if (!username) {
+      return res.redirect(302, '/');
+    }
+
+    const pageUrl = `https://ville.social${req.originalUrl}`;
+    const ua = req.headers['user-agent'] || '';
+    const bot = /facebookexternalhit|twitterbot|linkedinbot|slackbot|discordbot|pinterest|telegrambot|whatsapp/i.test(ua) ||
+                req.method === 'HEAD';
+
+    // Build simple meta tags for user profile with deep linking
+    const head = `
+<!-- Essential Meta Tags -->
+<meta charset="UTF-8">
+<title>${username} - Ville Profile</title>
+<meta name="description" content="View ${username}'s profile on Ville - Find events near you, for you.">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- Open Graph Meta Tags -->
+<meta property="og:title" content="${username} - Ville Profile">
+<meta property="og:description" content="View ${username}'s profile on Ville - Find events near you, for you.">
+<meta property="og:url" content="${pageUrl}">
+<meta property="og:type" content="profile">
+<meta property="og:site_name" content="Ville">
+
+<!-- Deep-link tags -->
+<meta property="al:ios:app_store_id" content="${process.env.VILLE_IOS_APP_ID || '6618138529'}">
+<meta property="al:ios:url" content="ville://u/${username}">
+<meta name="apple-itunes-app" content="app-id=${process.env.VILLE_IOS_APP_ID || '6618138529'}, app-argument=ville://u/${username}">
+<meta property="al:android:package" content="${process.env.VILLE_ANDROID_PKG || 'com.ville.ville'}">
+<meta property="al:android:url" content="ville://u/${username}">
+
+<!-- Deep Link Auto-Redirect Script -->
+<script>
+(function() {
+  var deepLink = 'ville://u/${username}';
+  var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  var isAndroid = /Android/.test(navigator.userAgent);
+  
+  if ((isIOS || isAndroid) && deepLink) {
+    var startTime = Date.now();
+    var appOpened = false;
+    
+    var iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = deepLink;
+    document.body.appendChild(iframe);
+    
+    setTimeout(function() {
+      window.location.href = deepLink;
+    }, 100);
+    
+    var checkInterval = setInterval(function() {
+      if (document.hidden || document.webkitHidden) {
+        appOpened = true;
+        clearInterval(checkInterval);
+      }
+    }, 200);
+    
+    setTimeout(function() {
+      clearInterval(checkInterval);
+      if (!appOpened && (Date.now() - startTime) < 3000) {
+        if (iframe.parentNode) {
+          iframe.parentNode.removeChild(iframe);
+        }
+      }
+    }, 2500);
+  }
+})();
+</script>`;
+
+    if (bot) {
+      res.set('Cache-Control', 'public,max-age=300,s-maxage=300');
+      return res.status(200)
+                .send(`<!DOCTYPE html><html><head>${head}</head><body></body></html>`);
+    }
+
+    // Human browser – inject into SPA
+    const upstream = await fetch('https://ville.social/index.html');
+    let html = await upstream.text();
+    html = html.replace(/<head[^>]*>/i, (match) => `${match}\n  ${head}\n`);
+    
+    res.set('Cache-Control', 'public,max-age=300,s-maxage=300');
+    return res.status(200).send(html);
+  } catch (err) {
+    console.error('Error in userMeta:', err);
+    return res.redirect(302, '/');
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────
+   5. videoMeta – Handle deep linking for videos /v/
+   ───────────────────────────────────────────────────────────── */
+exports.videoMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
+  try {
+    // Extract video ID from path
+    let videoId = '';
+    if (req.path.includes('/v/')) {
+      videoId = req.path.split('/v/')[1]?.split('/')[0] || '';
+    } else if (req.originalUrl.includes('/v/')) {
+      videoId = req.originalUrl.split('/v/')[1]?.split('/')[0] || '';
+    }
+    
+    if (!videoId) {
+      return res.redirect(302, '/');
+    }
+
+    const pageUrl = `https://ville.social${req.originalUrl}`;
+    const ua = req.headers['user-agent'] || '';
+    const bot = /facebookexternalhit|twitterbot|linkedinbot|slackbot|discordbot|pinterest|telegrambot|whatsapp/i.test(ua) ||
+                req.method === 'HEAD';
+
+    // Build simple meta tags for video with deep linking
+    const head = `
+<!-- Essential Meta Tags -->
+<meta charset="UTF-8">
+<title>Video - Ville</title>
+<meta name="description" content="Watch this video on Ville - Find events near you, for you.">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- Open Graph Meta Tags -->
+<meta property="og:title" content="Video - Ville">
+<meta property="og:description" content="Watch this video on Ville - Find events near you, for you.">
+<meta property="og:url" content="${pageUrl}">
+<meta property="og:type" content="video.other">
+<meta property="og:site_name" content="Ville">
+
+<!-- Deep-link tags -->
+<meta property="al:ios:app_store_id" content="${process.env.VILLE_IOS_APP_ID || '6618138529'}">
+<meta property="al:ios:url" content="ville://v/${videoId}">
+<meta name="apple-itunes-app" content="app-id=${process.env.VILLE_IOS_APP_ID || '6618138529'}, app-argument=ville://v/${videoId}">
+<meta property="al:android:package" content="${process.env.VILLE_ANDROID_PKG || 'com.ville.ville'}">
+<meta property="al:android:url" content="ville://v/${videoId}">
+
+<!-- Deep Link Auto-Redirect Script -->
+<script>
+(function() {
+  var deepLink = 'ville://v/${videoId}';
+  var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  var isAndroid = /Android/.test(navigator.userAgent);
+  
+  if ((isIOS || isAndroid) && deepLink) {
+    var startTime = Date.now();
+    var appOpened = false;
+    
+    var iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = deepLink;
+    document.body.appendChild(iframe);
+    
+    setTimeout(function() {
+      window.location.href = deepLink;
+    }, 100);
+    
+    var checkInterval = setInterval(function() {
+      if (document.hidden || document.webkitHidden) {
+        appOpened = true;
+        clearInterval(checkInterval);
+      }
+    }, 200);
+    
+    setTimeout(function() {
+      clearInterval(checkInterval);
+      if (!appOpened && (Date.now() - startTime) < 3000) {
+        if (iframe.parentNode) {
+          iframe.parentNode.removeChild(iframe);
+        }
+      }
+    }, 2500);
+  }
+})();
+</script>`;
+
+    if (bot) {
+      res.set('Cache-Control', 'public,max-age=300,s-maxage=300');
+      return res.status(200)
+                .send(`<!DOCTYPE html><html><head>${head}</head><body></body></html>`);
+    }
+
+    // Human browser – inject into SPA
+    const upstream = await fetch('https://ville.social/index.html');
+    let html = await upstream.text();
+    html = html.replace(/<head[^>]*>/i, (match) => `${match}\n  ${head}\n`);
+    
+    res.set('Cache-Control', 'public,max-age=300,s-maxage=300');
+    return res.status(200).send(html);
+  } catch (err) {
+    console.error('Error in videoMeta:', err);
+    return res.redirect(302, '/');
+  }
+});

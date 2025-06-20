@@ -254,6 +254,69 @@ ${latitude && longitude ? `<meta name="geo.position" content="${latitude};${long
 <meta name="theme-color" content="${THEME_COLOR}">
 <link rel="icon" href="/favicon.ico">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+
+<!-- Deep Link Auto-Redirect Script -->
+<script>
+(function() {
+  // Determine the deep link URL based on current path
+  var path = window.location.pathname;
+  var deepLink = '';
+  
+  if (path.startsWith('/event/')) {
+    deepLink = 'ville:/' + path;
+  } else if (path.startsWith('/u/')) {
+    deepLink = 'ville:/' + path;
+  } else if (path.startsWith('/v/')) {
+    deepLink = 'ville:/' + path;
+  }
+  
+  if (deepLink) {
+    // Detect platform
+    var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    var isAndroid = /Android/.test(navigator.userAgent);
+    
+    // Store original page URL for fallback
+    var fallbackUrl = window.location.href;
+    
+    if (isIOS || isAndroid) {
+      // Try to open the app
+      var startTime = Date.now();
+      var appOpened = false;
+      
+      // Create invisible iframe to attempt deep link
+      var iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      iframe.src = deepLink;
+      document.body.appendChild(iframe);
+      
+      // Also try direct location change for some browsers
+      setTimeout(function() {
+        window.location.href = deepLink;
+      }, 100);
+      
+      // Check if app opened (browser will lose focus)
+      var checkInterval = setInterval(function() {
+        if (document.hidden || document.webkitHidden) {
+          appOpened = true;
+          clearInterval(checkInterval);
+        }
+      }, 200);
+      
+      // Fallback: if app didn't open after 2.5 seconds, stay on web
+      setTimeout(function() {
+        clearInterval(checkInterval);
+        if (!appOpened && (Date.now() - startTime) < 3000) {
+          // App probably not installed, user stays on web version
+          // Remove iframe to prevent any issues
+          if (iframe.parentNode) {
+            iframe.parentNode.removeChild(iframe);
+          }
+        }
+      }, 2500);
+    }
+  }
+})();
+</script>
 `.trim();
 }
 

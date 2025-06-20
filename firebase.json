@@ -1,55 +1,19 @@
 {
-  "functions": {
-    "source": "functions"
-  },
-
   "hosting": {
-    "public": "build/web",            
+    "public": "build/web",
     "ignore": [
       "firebase.json",
       "**/.*",
-      "**/node_modules/**"
+      "**/node_modules/**",
+      "event/**"            // ← DO NOT upload static snapshots
     ],
-
-
     "rewrites": [
-
-      {
-        "source": "/event/**",
-        "function": "eventMeta"     
-      },
-
-
-      { "source": "/__/auth/**",  "destination": "/__/auth/index.html" },
-      { "source": "/__/functions/**", "function": "proxy" },
-
- 
+      { "source": "/event/**", "function": "renderEventPage" },
       { "source": "**", "destination": "/index.html" }
-    ],
-
-
-    "headers": [
-
-      {
-        "source": "/**/*.@(js|css)",
-        "headers": [
-          { "key": "Cache-Control", "value": "public,max-age=31536000,immutable" }
-        ]
-      },
-
-      {
-        "source": "/index.html",
-        "headers": [
-          { "key": "Cache-Control", "value": "public,max-age=300" }
-        ]
-      },
-
-      {
-        "source": "/robots.txt",
-        "headers": [
-          { "key": "Cache-Control", "value": "public,max-age=86400" }
-        ]
-      }
     ]
+  },
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs18"    // or nodejs20 if you prefer 2-gen
   }
 }
