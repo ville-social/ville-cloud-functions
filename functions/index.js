@@ -19,8 +19,80 @@ const fs          = require('fs/promises');
 const url         = require('url');
 const { v4: uuidv4 } = require('uuid');
 const fetch       = (...a) => import('node-fetch').then(({default:f}) => f(...a));
+const nodemailer = require('nodemailer');
 
 const { buildRichMeta } = require('./shared/buildRichMeta');
+
+/**
+ * Send email using SMTP (Gmail App Password or SendGrid)
+ */
+async function sendEmailDirect(to, subject, html) {
+  try {
+    // You can use either Gmail App Password or SendGrid
+    // For Gmail: Go to Google Account > Security > 2-Step Verification > App Passwords
+    // Generate an app password for "Mail" and set it as environment variable
+    
+    let transporter;
+    
+    const config = functions.config();
+    
+    if (config.gmail?.app_password) {
+      // Gmail SMTP with App Password
+      transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          user: 'danny@ville.social',
+          pass: config.gmail.app_password, // App password from Google Account settings
+        },
+      });
+    } else if (config.sendgrid?.api_key) {
+      // SendGrid SMTP
+      transporter = nodemailer.createTransport({
+        host: 'smtp.sendgrid.net',
+        port: 587,
+        secure: false,
+        auth: {
+          user: 'apikey',
+          pass: config.sendgrid.api_key,
+        },
+      });
+    } else {
+      // Fallback to a simple SMTP service (for testing only)
+      console.log('⚠️  No email credentials configured, using ethereal email for testing');
+      const testAccount = await nodemailer.createTestAccount();
+      transporter = nodemailer.createTransporter({
+        host: 'smtp.ethereal.email',
+        port: 587,
+        secure: false,
+        auth: {
+          user: testAccount.user,
+          pass: testAccount.pass,
+        },
+      });
+    }
+    
+    const mailOptions = {
+      from: '"Ville Alert System" <danny@ville.social>',
+      to: to,
+      subject: subject,
+      html: html,
+    };
+    
+    const result = await transporter.sendMail(mailOptions);
+    console.log('📧 Email sent successfully:', result.messageId);
+    
+    // If using Ethereal, log the preview URL
+    if (!config.gmail?.app_password && !config.sendgrid?.api_key) {
+      console.log('📧 Preview URL:', nodemailer.getTestMessageUrl(result));
+    }
+    
+    return { success: true, messageId: result.messageId };
+    
+  } catch (error) {
+    console.error('❌ Email send failed:', error);
+    return { success: false, error: error.message };
+  }
+}
 
 /* ─── Initialise Admin once ─── */
 if (!admin.apps.length) admin.initializeApp();
@@ -478,51 +550,52 @@ exports.videoMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
 /* ─────────────────────────────────────────────────────────────
    6. Event Health Monitor – Monitor new events and test URLs
    ───────────────────────────────────────────────────────────── */
-exports.monitorEventHealth = onDocumentCreated({
-  document: 'events/{eventId}',
-  region: 'us-central1'
-}, async (event) => {
-  const eventId = event.params.eventId;
-  const eventData = event.data.data();
-  
-  console.log(`🔍 Monitoring new event: ${eventId}`);
-  
-  try {
-    // Wait a moment for the event to be fully available
-    await new Promise(resolve => setTimeout(resolve, 3000));
+exports.monitorEventHealth = functions
+  .region('us-central1')
+  .firestore
+  .document('events/{eventId}')
+  .onCreate(async (snap, context) => {
+    const eventId = context.params.eventId;
+    const eventData = snap.data();
     
-    // Test the event URL
-    const eventUrl = `https://ville.social/event/${eventId}`;
-    const testResult = await testEventUrl(eventUrl, eventId);
+    console.log(`🔍 Monitoring new event: ${eventId}`);
     
-    if (!testResult.success) {
-      console.error(`❌ Event URL test failed for ${eventId}:`, testResult.error);
+    try {
+      // Wait a moment for the event to be fully available
+      await new Promise(resolve => setTimeout(resolve, 3000));
       
-      // Store alert in Firestore
-      await getFirestore().collection('eventHealthAlerts').add({
-        eventId,
-        eventUrl,
-        error: testResult.error,
-        eventData: {
-          title: eventData.title || 'Unknown',
-          createdAt: eventData.createdAt || 'Unknown'
-        },
-        timestamp: getFirestore().FieldValue.serverTimestamp(),
-        resolved: false
-      });
+      // Test the event URL
+      const eventUrl = `https://ville.social/event/${eventId}`;
+      const testResult = await testEventUrl(eventUrl, eventId);
       
-      console.log(`📧 Alert stored for failed event ${eventId}`);
-    } else {
-      console.log(`✅ Event URL test passed for ${eventId}`);
+      if (!testResult.success) {
+        console.error(`❌ Event URL test failed for ${eventId}:`, testResult.error);
+        
+        // Store alert in Firestore
+        await db.collection('eventHealthAlerts').add({
+          eventId,
+          eventUrl,
+          error: testResult.error,
+          eventData: {
+            title: eventData.title || 'Unknown',
+            createdAt: eventData.createdAt || 'Unknown'
+          },
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          resolved: false
+        });
+        
+        console.log(`📧 Alert stored for failed event ${eventId}`);
+      } else {
+        console.log(`✅ Event URL test passed for ${eventId}`);
+      }
+      
+    } catch (error) {
+      console.error(`💥 Error monitoring event ${eventId}:`, error);
     }
-    
-  } catch (error) {
-    console.error(`💥 Error monitoring event ${eventId}:`, error);
-  }
-});
+  });
 
 /**
- * Test if an event URL loads correctly
+ * Test if an event URL loads correctly and video URLs are accessible
  */
 async function testEventUrl(url, eventId) {
   try {
@@ -544,24 +617,104 @@ async function testEventUrl(url, eventId) {
     
     const html = await response.text();
     
-    // Check for signs of a working page
-    const checks = {
-      hasHtml: html.includes('<html'),
-      hasTitle: html.includes('<title>') && !html.includes('<title></title>'),
-      hasMetaTags: html.includes('<meta'),
-      hasEventId: html.includes(eventId),
-      notBlankPage: html.length > 1000, // Reasonable content length
-      noErrorMessages: !html.includes('error') && !html.includes('404')
-    };
-    
-    const failedChecks = Object.entries(checks)
-      .filter(([key, passed]) => !passed)
-      .map(([key]) => key);
-    
-    if (failedChecks.length > 0) {
+    // Check if page loaded properly
+    if (html.length < 1000) {
       return {
         success: false,
-        error: `Failed checks: ${failedChecks.join(', ')}. Content length: ${html.length}`
+        error: `Page too small: ${html.length} bytes - likely blank page`
+      };
+    }
+    
+    // Extract video URLs from the HTML
+    const videoUrls = extractVideoUrls(html);
+    
+    if (videoUrls.length === 0) {
+      return {
+        success: false,
+        error: `No video URLs found in page HTML`
+      };
+    }
+    
+    console.log(`📹 Found ${videoUrls.length} video URLs, testing accessibility...`);
+    
+    // Test each video URL
+    for (const videoUrl of videoUrls) {
+      const videoTest = await testVideoUrl(videoUrl);
+      if (!videoTest.success) {
+        return {
+          success: false,
+          error: `Video URL failed: ${videoUrl} - ${videoTest.error}`
+        };
+      }
+    }
+    
+    return { 
+      success: true, 
+      videoUrls: videoUrls,
+      message: `Page loaded successfully with ${videoUrls.length} accessible video(s)`
+    };
+    
+  } catch (error) {
+    return {
+      success: false,
+      error: `Fetch error: ${error.message}`
+    };
+  }
+}
+
+/**
+ * Extract video URLs from HTML content
+ */
+function extractVideoUrls(html) {
+  const videoUrls = [];
+  
+  // Pattern for Firebase Storage video URLs
+  const firebaseVideoPattern = /https:\/\/firebasestorage\.googleapis\.com\/v0\/b\/ville-9fe9d\.appspot\.com\/o\/(?:events|videos)%2F[^"'\s]+\.mp4[^"'\s]*/g;
+  
+  const matches = html.match(firebaseVideoPattern);
+  if (matches) {
+    videoUrls.push(...matches);
+  }
+  
+  // Also check for direct video URLs in src attributes
+  const srcPattern = /src\s*=\s*["']([^"']*\.mp4[^"']*)/gi;
+  let srcMatch;
+  while ((srcMatch = srcPattern.exec(html)) !== null) {
+    if (srcMatch[1].includes('firebasestorage.googleapis.com')) {
+      videoUrls.push(srcMatch[1]);
+    }
+  }
+  
+  // Remove duplicates
+  return [...new Set(videoUrls)];
+}
+
+/**
+ * Test if a video URL is accessible
+ */
+async function testVideoUrl(videoUrl) {
+  try {
+    console.log(`🎥 Testing video URL: ${videoUrl}`);
+    
+    const response = await fetch(videoUrl, {
+      method: 'HEAD', // Only get headers, not the full video
+      headers: {
+        'User-Agent': 'Event-Health-Monitor/1.0'
+      }
+    });
+    
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `HTTP ${response.status}: ${response.statusText}`
+      };
+    }
+    
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('video')) {
+      return {
+        success: false,
+        error: `Invalid content type: ${contentType} (expected video/*)`
       };
     }
     
@@ -570,7 +723,7 @@ async function testEventUrl(url, eventId) {
   } catch (error) {
     return {
       success: false,
-      error: `Fetch error: ${error.message}`
+      error: `Video fetch error: ${error.message}`
     };
   }
 }
@@ -597,64 +750,132 @@ exports.testEventUrl = onRequest({ region: 'us-central1' }, async (req, res) => 
   });
 });
 
+/**
+ * Manual function to test event URL and create alert if it fails
+ * Call this via HTTP: https://us-central1-ville-9fe9d.cloudfunctions.net/testEventUrlWithAlert?eventId=EVENT_ID
+ */
+exports.testEventUrlWithAlert = onRequest({ region: 'us-central1' }, async (req, res) => {
+  const eventId = req.query.eventId;
+  
+  if (!eventId) {
+    return res.status(400).json({ error: 'Missing eventId parameter' });
+  }
+  
+  const eventUrl = `https://ville.social/event/${eventId}`;
+  const result = await testEventUrl(eventUrl, eventId);
+  
+  // If test failed, create an alert (which will trigger email)
+  if (!result.success) {
+    try {
+      const alertRef = await db.collection('eventHealthAlerts').add({
+        eventId,
+        eventUrl,
+        error: result.error,
+        eventData: {
+          title: 'Manual Test Event',
+          createdAt: new Date().toISOString()
+        },
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        resolved: false,
+        source: 'manual-test'
+      });
+      
+      res.json({
+        eventId,
+        eventUrl,
+        result,
+        alertCreated: true,
+        alertId: alertRef.id,
+        message: 'Test failed - alert created and email should be sent',
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      res.json({
+        eventId,
+        eventUrl,
+        result,
+        alertCreated: false,
+        alertError: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+  } else {
+    res.json({
+      eventId,
+      eventUrl,
+      result,
+      alertCreated: false,
+      message: 'Test passed - no alert needed',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 /* ─────────────────────────────────────────────────────────────
    7. Email Alerts for Event Health Issues
    ───────────────────────────────────────────────────────────── */
-exports.sendEventHealthEmail = onDocumentCreated({
-  document: 'eventHealthAlerts/{alertId}',
-  region: 'us-central1'
-}, async (event) => {
-  const alertData = event.data.data();
-  const alertId = event.params.alertId;
-  
-  console.log(`📧 Sending email alert for event: ${alertData.eventId}`);
-  
-  try {
-    // Create email document for Firebase Extension "Trigger Email"
-    // Make sure to install the extension and configure it first
-    await getFirestore().collection('mail').add({
-      to: ['danny@ville.social'],
-      message: {
-        subject: `🚨 Event URL Health Alert - ${alertData.eventId}`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #d32f2f;">🚨 Event URL Health Alert</h2>
-            
-            <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
-              <h3>Event Details</h3>
-              <p><strong>Event ID:</strong> ${alertData.eventId}</p>
-              <p><strong>Event Title:</strong> ${alertData.eventData?.title || 'Unknown'}</p>
-              <p><strong>Event URL:</strong> <a href="${alertData.eventUrl}" target="_blank">${alertData.eventUrl}</a></p>
-              <p><strong>Error:</strong> ${alertData.error}</p>
-              <p><strong>Time:</strong> ${new Date().toISOString()}</p>
-            </div>
-            
-            <div style="background-color: #e3f2fd; padding: 20px; border-radius: 8px; margin: 20px 0;">
-              <h3>🔧 Troubleshooting Steps</h3>
-              <ol>
-                <li><strong>Test the URL manually:</strong> <a href="${alertData.eventUrl}" target="_blank">Open ${alertData.eventUrl}</a></li>
-                <li><strong>Check Firestore:</strong> Verify the event exists in your events collection</li>
-                <li><strong>Check Cloud Functions:</strong> Look at eventMeta function logs in Firebase Console</li>
-                <li><strong>Check Firebase Hosting:</strong> Verify the /event/** rewrite is working</li>
-                <li><strong>Manual Test:</strong> <a href="https://us-central1-ville-9fe9d.cloudfunctions.net/testEventUrl?eventId=${alertData.eventId}" target="_blank">Test Event URL</a></li>
-              </ol>
-            </div>
-            
-            <p style="color: #666; font-size: 12px; margin-top: 30px;">
-              This alert was generated automatically by your Event Health Monitor.<br>
-              Alert ID: ${alertId}
-            </p>
-          </div>
-        `
-      }
-    });
+exports.sendEventHealthEmail = functions
+  .region('us-central1')
+  .firestore
+  .document('eventHealthAlerts/{alertId}')
+  .onCreate(async (snap, context) => {
+    const alertData = snap.data();
+    const alertId = context.params.alertId;
     
-    console.log(`✅ Email queued for event health alert: ${alertData.eventId}`);
+    console.log(`📧 Sending email alert for event: ${alertData.eventId}`);
     
-  } catch (error) {
-    console.error('❌ Failed to send email alert:', error);
-  }
-});
+    try {
+      // Create email document for Firebase Extension "Trigger Email"
+      // Make sure to install the extension and configure it first
+      const emailData = {
+        to: ['danny@ville.social'],
+        message: {
+          subject: `🚨 Event URL Health Alert - ${alertData.eventId}`,
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2 style="color: #d32f2f;">🚨 Event URL Health Alert</h2>
+              
+              <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                <h3>Event Details</h3>
+                <p><strong>Event ID:</strong> ${alertData.eventId}</p>
+                <p><strong>Event Title:</strong> ${alertData.eventData?.title || 'Unknown'}</p>
+                <p><strong>Event URL:</strong> <a href="${alertData.eventUrl}" target="_blank">${alertData.eventUrl}</a></p>
+                <p><strong>Error:</strong> ${alertData.error}</p>
+                <p><strong>Time:</strong> ${new Date().toISOString()}</p>
+              </div>
+              
+              <div style="background-color: #e3f2fd; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                <h3>🔧 Troubleshooting Steps</h3>
+                <ol>
+                  <li><strong>Test the URL manually:</strong> <a href="${alertData.eventUrl}" target="_blank">Open ${alertData.eventUrl}</a></li>
+                  <li><strong>Check Firestore:</strong> Verify the event exists in your events collection</li>
+                  <li><strong>Check Cloud Functions:</strong> Look at eventMeta function logs in Firebase Console</li>
+                  <li><strong>Check Firebase Hosting:</strong> Verify the /event/** rewrite is working</li>
+                  <li><strong>Manual Test:</strong> <a href="https://us-central1-ville-9fe9d.cloudfunctions.net/testEventUrl?eventId=${alertData.eventId}" target="_blank">Test Event URL</a></li>
+                </ol>
+              </div>
+              
+              <p style="color: #666; font-size: 12px; margin-top: 30px;">
+                This alert was generated automatically by your Event Health Monitor.<br>
+                Alert ID: ${alertId}
+              </p>
+            </div>
+          `
+        }
+      };
+      
+      // Log the email content for debugging
+      console.log('📧 EMAIL CONTENT:', JSON.stringify(emailData, null, 2));
+      
+      // Send email directly using Nodemailer (no extension needed)
+      await sendEmailDirect(emailData.to[0], emailData.message.subject, emailData.message.html);
+      
+      console.log(`✅ Email queued for event health alert: ${alertData.eventId}`);
+      
+    } catch (error) {
+      console.error('❌ Failed to send email alert:', error);
+    }
+  });
 
 /**
  * Manual function to test email alerts
@@ -671,12 +892,12 @@ exports.testEmailAlert = onRequest({ region: 'us-central1' }, async (req, res) =
         title: 'Test Event',
         createdAt: new Date().toISOString()
       },
-      timestamp: getFirestore().FieldValue.serverTimestamp(),
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
       resolved: false
     };
     
     // Add to alerts collection (this will trigger the email)
-    const alertRef = await getFirestore().collection('eventHealthAlerts').add(testAlert);
+    const alertRef = await db.collection('eventHealthAlerts').add(testAlert);
     
     res.json({
       success: true,
