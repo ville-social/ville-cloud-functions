@@ -555,16 +555,25 @@ exports.monitorEventHealth = functions
   .firestore
   .document('events/{eventId}')
   .onCreate(async (snap, context) => {
-    const eventId = context.params.eventId;
+    const docId = context.params.eventId;
     const eventData = snap.data();
     
-    console.log(`🔍 Monitoring new event: ${eventId}`);
+    // Use the eventID field from the document data, not the document ID
+    const eventId = eventData.eventID;
+    
+    if (!eventId) {
+      console.error(`❌ No eventID field found in document ${docId}`);
+      return;
+    }
+    
+    console.log(`🔍 Monitoring new event: ${eventId} (doc: ${docId})`);
     
     try {
-      // Wait a moment for the event to be fully available
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // Wait 30 seconds for the event to be fully processed by eventMeta function
+      console.log('⏳ Waiting 30 seconds for event processing...');
+      await new Promise(resolve => setTimeout(resolve, 30000));
       
-      // Test the event URL
+      // Test the event URL using the eventID field
       const eventUrl = `https://ville.social/event/${eventId}`;
       const testResult = await testEventUrl(eventUrl, eventId);
       
@@ -574,6 +583,7 @@ exports.monitorEventHealth = functions
         // Store alert in Firestore
         await db.collection('eventHealthAlerts').add({
           eventId,
+          docId,
           eventUrl,
           error: testResult.error,
           eventData: {
@@ -617,41 +627,45 @@ async function testEventUrl(url, eventId) {
     
     const html = await response.text();
     
-    // Check if page loaded properly
-    if (html.length < 1000) {
+    // Check if page loaded properly - should be substantial content
+    if (html.length < 5000) {
       return {
         success: false,
-        error: `Page too small: ${html.length} bytes - likely blank page`
+        error: `Page too small: ${html.length} bytes - likely blank page or error`
       };
     }
     
-    // Extract video URLs from the HTML
-    const videoUrls = extractVideoUrls(html);
+    // Check if this is the Flutter web app (not a blank page, error, or fallback)
+    const hasFlutterBootstrap = html.includes('_flutter.loader.load') || html.includes('flutter_bootstrap.js');
+    const hasFlutterBuildConfig = html.includes('_flutter.buildConfig');
+    const hasEventTitle = html.includes('<title>') && !html.includes('<title></title>');
     
-    if (videoUrls.length === 0) {
+    if (!hasFlutterBootstrap) {
       return {
         success: false,
-        error: `No video URLs found in page HTML`
+        error: `No Flutter bootstrap detected - page may be showing error or fallback content`
       };
     }
     
-    console.log(`📹 Found ${videoUrls.length} video URLs, testing accessibility...`);
-    
-    // Test each video URL
-    for (const videoUrl of videoUrls) {
-      const videoTest = await testVideoUrl(videoUrl);
-      if (!videoTest.success) {
-        return {
-          success: false,
-          error: `Video URL failed: ${videoUrl} - ${videoTest.error}`
-        };
-      }
+    if (!hasFlutterBuildConfig) {
+      return {
+        success: false,
+        error: `No Flutter build config detected - Flutter app may not be properly configured`
+      };
     }
+    
+    if (!hasEventTitle) {
+      return {
+        success: false,
+        error: `No event title detected - eventMeta function may have failed to load event data`
+      };
+    }
+    
+    console.log(`✅ Flutter web app appears to be properly loaded with event content`);
     
     return { 
       success: true, 
-      videoUrls: videoUrls,
-      message: `Page loaded successfully with ${videoUrls.length} accessible video(s)`
+      message: `Event page loaded successfully with Flutter app running`
     };
     
   } catch (error) {
@@ -662,32 +676,7 @@ async function testEventUrl(url, eventId) {
   }
 }
 
-/**
- * Extract video URLs from HTML content
- */
-function extractVideoUrls(html) {
-  const videoUrls = [];
-  
-  // Pattern for Firebase Storage video URLs
-  const firebaseVideoPattern = /https:\/\/firebasestorage\.googleapis\.com\/v0\/b\/ville-9fe9d\.appspot\.com\/o\/(?:events|videos)%2F[^"'\s]+\.mp4[^"'\s]*/g;
-  
-  const matches = html.match(firebaseVideoPattern);
-  if (matches) {
-    videoUrls.push(...matches);
-  }
-  
-  // Also check for direct video URLs in src attributes
-  const srcPattern = /src\s*=\s*["']([^"']*\.mp4[^"']*)/gi;
-  let srcMatch;
-  while ((srcMatch = srcPattern.exec(html)) !== null) {
-    if (srcMatch[1].includes('firebasestorage.googleapis.com')) {
-      videoUrls.push(srcMatch[1]);
-    }
-  }
-  
-  // Remove duplicates
-  return [...new Set(videoUrls)];
-}
+
 
 /**
  * Test if a video URL is accessible
