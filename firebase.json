@@ -5,15 +5,17 @@
       "firebase.json",
       "**/.*",
       "**/node_modules/**",
-      "event/**"            // ← DO NOT upload static snapshots
+      "event/**"
     ],
     "rewrites": [
-      { "source": "/event/**", "function": "renderEventPage" },
+      { "source": "/event/**", "function": "eventMeta" },
+      { "source": "/u/**", "function": "userMeta" },
+      { "source": "/v/**", "function": "videoMeta" },
       { "source": "**", "destination": "/index.html" }
     ]
   },
   "functions": {
     "source": "functions",
-    "runtime": "nodejs18"    // or nodejs20 if you prefer 2-gen
+    "runtime": "nodejs18"
   }
 }
