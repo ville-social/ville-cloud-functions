@@ -193,17 +193,39 @@ exports.eventMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
       return res.redirect(302, '/');
     }
 
-    // Look-up by the *eventID* field (not doc ID)
+    // Look-up by the *eventID* field (not doc ID) with retry logic
     console.log('Querying for eventID:', eventKey);
-    const q = await db.collection('events')
-                      .where('eventID', '==', eventKey)
-                      .limit(1)
-                      .get();
+    let q = null;
+    let attempts = 0;
+    const maxAttempts = 3;
     
-    console.log('Query result empty:', q.empty);
+    while (attempts < maxAttempts) {
+      q = await db.collection('events')
+                  .where('eventID', '==', eventKey)
+                  .limit(1)
+                  .get();
+      
+      console.log(`Query attempt ${attempts + 1}: result empty: ${q.empty}`);
+      
+      if (!q.empty) {
+        break; // Found the event, exit retry loop
+      }
+      
+      attempts++;
+      if (attempts < maxAttempts) {
+        console.log(`Event not found on attempt ${attempts}, retrying in 500ms...`);
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    
     if (q.empty) {
-      console.log('Event not found, redirecting to /');
-      return res.redirect(302, '/');
+      console.log('Event not found after all retries, serving fallback SPA');
+      // Don't redirect - serve the SPA so the frontend can handle the missing event
+      const upstream = await fetch('https://ville.social/index.html');
+      let html = await upstream.text();
+      
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate'); // Don't cache failed lookups
+      return res.status(200).send(html);
     }
 
     const d       = q.docs[0].data();
