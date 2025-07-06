@@ -569,16 +569,12 @@ exports.monitorEventHealth = functions
     console.log(`🔍 Monitoring new event: ${eventId} (doc: ${docId})`);
     
     try {
-      // Wait 30 seconds for the event to be fully processed by eventMeta function
-      console.log('⏳ Waiting 30 seconds for event processing...');
-      await new Promise(resolve => setTimeout(resolve, 30000));
-      
-      // Test the event URL using the eventID field
+      // Test the event URL with retry logic
       const eventUrl = `https://ville.social/event/${eventId}`;
-      const testResult = await testEventUrl(eventUrl, eventId);
+      const testResult = await testEventUrlWithRetries(eventUrl, eventId);
       
       if (!testResult.success) {
-        console.error(`❌ Event URL test failed for ${eventId}:`, testResult.error);
+        console.error(`❌ Event URL test failed after all retries for ${eventId}:`, testResult.error);
         
         // Store alert in Firestore
         await db.collection('eventHealthAlerts').add({
@@ -586,6 +582,7 @@ exports.monitorEventHealth = functions
           docId,
           eventUrl,
           error: testResult.error,
+          attempts: testResult.attempts,
           eventData: {
             title: eventData.title || 'Unknown',
             createdAt: eventData.createdAt || 'Unknown'
@@ -596,13 +593,63 @@ exports.monitorEventHealth = functions
         
         console.log(`📧 Alert stored for failed event ${eventId}`);
       } else {
-        console.log(`✅ Event URL test passed for ${eventId}`);
+        console.log(`✅ Event URL test passed for ${eventId} (attempt ${testResult.successAttempt})`);
       }
       
     } catch (error) {
       console.error(`💥 Error monitoring event ${eventId}:`, error);
     }
   });
+
+/**
+ * Test event URL with retry logic - 3 attempts, 45 seconds apart
+ */
+async function testEventUrlWithRetries(url, eventId) {
+  const maxAttempts = 3;
+  const retryDelay = 45000; // 45 seconds
+  let attempts = [];
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    console.log(`🔄 Attempt ${attempt}/${maxAttempts} for event ${eventId}`);
+    
+    // Wait 45 seconds before each attempt
+    console.log(`⏳ Waiting 45 seconds before testing...`);
+    await new Promise(resolve => setTimeout(resolve, retryDelay));
+    
+    const result = await testEventUrl(url, eventId);
+    attempts.push({
+      attempt,
+      timestamp: new Date().toISOString(),
+      success: result.success,
+      error: result.error || null
+    });
+    
+    if (result.success) {
+      console.log(`✅ Event URL test succeeded on attempt ${attempt}`);
+      return {
+        success: true,
+        successAttempt: attempt,
+        attempts,
+        message: result.message
+      };
+    } else {
+      console.log(`❌ Attempt ${attempt} failed: ${result.error}`);
+      
+      // If this is the last attempt, return failure
+      if (attempt === maxAttempts) {
+        console.log(`💥 All ${maxAttempts} attempts failed for event ${eventId}`);
+        return {
+          success: false,
+          error: `Failed after ${maxAttempts} attempts. Last error: ${result.error}`,
+          attempts
+        };
+      }
+      
+      // Continue to next attempt
+      console.log(`🔄 Will retry in 45 seconds... (${maxAttempts - attempt} attempts remaining)`);
+    }
+  }
+}
 
 /**
  * Test if an event URL loads correctly and video URLs are accessible
