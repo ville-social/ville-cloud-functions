@@ -1,12 +1,14 @@
 /**
  * regenerateAllEventPreviews.js
  * 
- * Standalone script to regenerate all event preview videos and images
- * with the new 9:16 format (360x640, 2.5 seconds)
+ * Standalone script to regenerate event preview videos and images
+ * with the new 9:16 format (360x640, 2.5 seconds) with actual video content
  * 
  * Usage:
- *   Test mode (10 events):  node regenerateAllEventPreviews.js test
- *   Full mode (all events): node regenerateAllEventPreviews.js
+ *   Test mode (10 events):      node regenerateAllEventPreviews.js test
+ *   Last N days:                node regenerateAllEventPreviews.js --days 10
+ *   Test mode with days:        node regenerateAllEventPreviews.js test --days 5
+ *   Full mode (all events):     node regenerateAllEventPreviews.js
  */
 
 const admin = require('firebase-admin');
@@ -15,20 +17,37 @@ const admin = require('firebase-admin');
 admin.initializeApp();
 const db = admin.firestore();
 
-async function regenerateAllEventPreviews(testMode = false) {
+async function regenerateAllEventPreviews(testMode = false, daysBack = null) {
   console.log('\n🎬 VILLE EVENT PREVIEW REGENERATION');
   console.log('=====================================');
   console.log('Format: 360x640 (9:16 vertical)');
   console.log('Duration: 2.5 seconds');
-  console.log('Background: Orange (#FF6400)');
+  console.log('Effect: Video content with 10% dark tint + logo overlay');
+  
+  if (daysBack) {
+    console.log(`Time Range: Last ${daysBack} days`);
+  }
   console.log(`Mode: ${testMode ? 'TEST MODE (max 10 events)' : 'FULL REGENERATION'}`);
   console.log('=====================================\n');
 
   try {
     // Build query for events with videos
     let query = db.collection('events')
-      .where('event_video', '!=', null)
-      .orderBy('event_video');
+      .where('event_video', '!=', null);
+    
+    // Add date filter if specified
+    if (daysBack) {
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - daysBack);
+      console.log(`🗓️  Filtering events created after: ${cutoffDate.toISOString()}\n`);
+      
+      query = query
+        .where('created_time', '>=', admin.firestore.Timestamp.fromDate(cutoffDate))
+        .orderBy('created_time', 'desc')
+        .orderBy('event_video');
+    } else {
+      query = query.orderBy('event_video');
+    }
     
     if (testMode) {
       query = query.limit(10);
@@ -39,7 +58,11 @@ async function regenerateAllEventPreviews(testMode = false) {
     const snapshot = await query.get();
     
     if (snapshot.empty) {
-      console.log('❌ No events found with videos.');
+      if (daysBack) {
+        console.log(`❌ No events found with videos in the last ${daysBack} days.`);
+      } else {
+        console.log('❌ No events found with videos.');
+      }
       return;
     }
 
@@ -49,7 +72,8 @@ async function regenerateAllEventPreviews(testMode = false) {
     console.log('📋 Sample events to be processed:');
     snapshot.docs.slice(0, 5).forEach(doc => {
       const data = doc.data();
-      console.log(`   - ${data.event_title || 'Untitled'} (${data.eventID || doc.id})`);
+      const createdDate = data.created_time ? data.created_time.toDate().toLocaleDateString() : 'Unknown date';
+      console.log(`   - ${data.event_title || 'Untitled'} (${data.eventID || doc.id}) - Created: ${createdDate}`);
     });
     if (snapshot.size > 5) {
       console.log(`   ... and ${snapshot.size - 5} more\n`);
@@ -84,18 +108,27 @@ async function regenerateAllEventPreviews(testMode = false) {
     const batchSize = 100;
     let totalProcessed = 0;
     let totalUpdated = 0;
+    let skippedCount = 0;
     
     for (let i = 0; i < snapshot.docs.length; i += batchSize) {
       const batch = db.batch();
       const batchDocs = snapshot.docs.slice(i, i + batchSize);
       const currentBatchSize = batchDocs.length;
+      let batchUpdated = 0;
       
       console.log(`📦 Processing batch ${Math.floor(i/batchSize) + 1} (${currentBatchSize} events)...`);
       
       batchDocs.forEach(doc => {
         const data = doc.data();
         
-        // Force regeneration for ALL events with videos
+        // Check if event actually has a video URL
+        if (!data.event_video || data.event_video === '') {
+          console.log(`   ⚠️  Skipping ${data.event_title || doc.id}: No video URL`);
+          skippedCount++;
+          return;
+        }
+        
+        // Force regeneration for events with videos
         // Clear preview fields and add timestamp to trigger processPreviewAssets
         batch.update(doc.ref, {
           event_preview_vid: admin.firestore.FieldValue.delete(),
@@ -104,15 +137,20 @@ async function regenerateAllEventPreviews(testMode = false) {
           // Add a small random value to ensure the document is seen as "changed"
           _preview_force_regen: Math.random()
         });
+        batchUpdated++;
         totalUpdated++;
       });
 
-      // Commit the batch
-      await batch.commit();
-      totalProcessed += currentBatchSize;
+      // Only commit if there are updates
+      if (batchUpdated > 0) {
+        await batch.commit();
+        console.log(`   ✅ Batch complete: ${batchUpdated} events marked for regeneration`);
+      } else {
+        console.log(`   ⏭️  Batch skipped: No valid events to update`);
+      }
       
-      console.log(`   ✅ Batch complete: ${totalProcessed}/${snapshot.size} events processed`);
-      console.log(`   🔄 All ${currentBatchSize} events marked for regeneration\n`);
+      totalProcessed += currentBatchSize;
+      console.log(`   📊 Progress: ${totalProcessed}/${snapshot.size} events processed\n`);
       
       // Small delay between batches to be nice to the system
       if (i + batchSize < snapshot.docs.length) {
@@ -125,18 +163,28 @@ async function regenerateAllEventPreviews(testMode = false) {
     console.log('✅ REGENERATION COMPLETE!');
     console.log('=====================================');
     console.log(`📊 Total events processed: ${totalProcessed}`);
-    console.log(`🔄 All ${totalUpdated} events marked for regeneration\n`);
-    
-    console.log('📝 NEXT STEPS:');
-    console.log('1. The processPreviewAssets function will automatically');
-    console.log('   detect the missing preview fields and regenerate them.');
-    console.log('2. Monitor regeneration progress in Firebase Console:');
-    console.log('   https://console.firebase.google.com/project/ville-9fe9d/functions/logs\n');
+    console.log(`🔄 Events marked for regeneration: ${totalUpdated}`);
+    if (skippedCount > 0) {
+      console.log(`⏭️  Events skipped (no video): ${skippedCount}`);
+    }
+    console.log('');
     
     if (totalUpdated > 0) {
+      console.log('📝 NEXT STEPS:');
+      console.log('1. The processPreviewAssets function will automatically');
+      console.log('   detect the missing preview fields and regenerate them.');
+      console.log('2. New previews will show actual video content with:');
+      console.log('   - 360x640 resolution (9:16 aspect ratio)');
+      console.log('   - 10% dark tint for better logo visibility');
+      console.log('   - Logo overlay centered on video');
+      console.log('3. Monitor regeneration progress in Firebase Console:');
+      console.log('   https://console.firebase.google.com/project/ville-9fe9d/functions/logs\n');
+      
       const estimatedTime = Math.ceil((totalUpdated * 3) / 60); // ~3 seconds per video
       console.log(`⏱️  Estimated regeneration time: ~${estimatedTime} minutes`);
       console.log('   (Depends on Cloud Function concurrency and video sizes)\n');
+    } else {
+      console.log('ℹ️  No events needed regeneration.\n');
     }
 
   } catch (error) {
@@ -151,21 +199,40 @@ async function regenerateAllEventPreviews(testMode = false) {
 const args = process.argv.slice(2);
 const testMode = args.includes('test') || args.includes('--test');
 
+// Parse days parameter
+let daysBack = null;
+const daysIndex = args.findIndex(arg => arg === '--days' || arg === '-d');
+if (daysIndex !== -1 && args[daysIndex + 1]) {
+  daysBack = parseInt(args[daysIndex + 1]);
+  if (isNaN(daysBack) || daysBack <= 0) {
+    console.error('❌ Invalid days value. Must be a positive number.');
+    process.exit(1);
+  }
+}
+
 // Show help if requested
 if (args.includes('--help') || args.includes('-h')) {
   console.log(`
 Usage: node regenerateAllEventPreviews.js [options]
 
 Options:
-  test, --test    Run in test mode (process only 10 events)
-  --help, -h      Show this help message
+  test, --test         Run in test mode (process only 10 events)
+  --days N, -d N       Regenerate previews for events from last N days
+  --help, -h           Show this help message
 
 Examples:
-  node regenerateAllEventPreviews.js          # Regenerate all previews
-  node regenerateAllEventPreviews.js test     # Test with 10 events
+  node regenerateAllEventPreviews.js                    # Regenerate all previews
+  node regenerateAllEventPreviews.js test               # Test with 10 events
+  node regenerateAllEventPreviews.js --days 10          # Regenerate last 10 days
+  node regenerateAllEventPreviews.js test --days 5      # Test mode for last 5 days
+
+Notes:
+  - New previews will show actual video content (not orange background)
+  - Videos are scaled to cover 360x640 (9:16) with 10% dark tint
+  - Logo overlay is centered on the video
 `);
   process.exit(0);
 }
 
 // Run the regeneration
-regenerateAllEventPreviews(testMode);
+regenerateAllEventPreviews(testMode, daysBack);
