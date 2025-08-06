@@ -308,24 +308,21 @@ exports.eventMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
     const pageUrl = `https://ville.social${req.originalUrl}`;  // Fixed URL
     const head    = buildRichMeta(d, pageUrl);
 
-    const ua  = req.headers['user-agent'] || '';
-    const bot = /facebookexternalhit|twitterbot|linkedinbot|slackbot|discordbot|pinterest|telegrambot|whatsapp/i.test(ua) ||
-                req.method === 'HEAD';
-
-    console.log('User agent:', ua);
-    console.log('Is bot:', bot);
-
-    if (bot) {
-      console.log('Serving bot response');
-      res.set('Cache-Control', 'public,max-age=300,s-maxage=300');
-      return res.status(200)
-                .send(`<!DOCTYPE html><html><head>${head}</head><body></body></html>`);
-    }
-
-    // Human browser – inject into SPA index.html
+    // Always serve the full Flutter app with injected meta tags
+    // Modern crawlers can execute JavaScript and will still see the meta tags
     console.log('Fetching upstream HTML');
+    console.log('User agent:', req.headers['user-agent'] || 'Unknown');
+    
     const upstream = await fetch('https://ville-9fe9d.firebaseapp.com/index.html');
-    let html       = await upstream.text();
+    if (!upstream.ok) {
+      console.error('Failed to fetch upstream HTML:', upstream.status, upstream.statusText);
+      // Fallback to basic HTML with meta tags
+      return res.status(200)
+                .send(`<!DOCTYPE html><html><head>${head}</head><body><h1>Loading...</h1><script>window.location.href='/';</script></body></html>`);
+    }
+    
+    let html = await upstream.text();
+    console.log('Upstream HTML length:', html.length);
     
     // Remove ALL duplicate meta tags
     html = html.replace(/<meta name=["']theme-color["'][^>]*>/gi, '');
@@ -365,9 +362,6 @@ exports.userMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
     }
 
     const pageUrl = `https://ville.social${req.originalUrl}`;
-    const ua = req.headers['user-agent'] || '';
-    const bot = /facebookexternalhit|twitterbot|linkedinbot|slackbot|discordbot|pinterest|telegrambot|whatsapp/i.test(ua) ||
-                req.method === 'HEAD';
 
     // Build simple meta tags for user profile with deep linking
     const head = `
@@ -430,13 +424,7 @@ exports.userMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
 })();
 </script>`;
 
-    if (bot) {
-      res.set('Cache-Control', 'public,max-age=300,s-maxage=300');
-      return res.status(200)
-                .send(`<!DOCTYPE html><html><head>${head}</head><body></body></html>`);
-    }
-
-    // Human browser – inject into SPA
+    // Always serve full app with meta tags injected
     const upstream = await fetch('https://ville-9fe9d.firebaseapp.com/index.html');
     let html = await upstream.text();
     html = html.replace(/<head[^>]*>/i, (match) => `${match}\n  ${head}\n`);
@@ -467,9 +455,6 @@ exports.videoMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
     }
 
     const pageUrl = `https://ville.social${req.originalUrl}`;
-    const ua = req.headers['user-agent'] || '';
-    const bot = /facebookexternalhit|twitterbot|linkedinbot|slackbot|discordbot|pinterest|telegrambot|whatsapp/i.test(ua) ||
-                req.method === 'HEAD';
 
     // Build simple meta tags for video with deep linking
     const head = `
@@ -532,13 +517,7 @@ exports.videoMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
 })();
 </script>`;
 
-    if (bot) {
-      res.set('Cache-Control', 'public,max-age=300,s-maxage=300');
-      return res.status(200)
-                .send(`<!DOCTYPE html><html><head>${head}</head><body></body></html>`);
-    }
-
-    // Human browser – inject into SPA
+    // Always serve full app with meta tags injected
     const upstream = await fetch('https://ville-9fe9d.firebaseapp.com/index.html');
     let html = await upstream.text();
     html = html.replace(/<head[^>]*>/i, (match) => `${match}\n  ${head}\n`);
