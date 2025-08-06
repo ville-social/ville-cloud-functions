@@ -313,7 +313,7 @@ exports.eventMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
     console.log('Fetching upstream HTML');
     console.log('User agent:', req.headers['user-agent'] || 'Unknown');
     
-    const upstream = await fetch('https://ville-9fe9d.firebaseapp.com/index.html');
+    const upstream = await fetch('https://ville.social/index.html');
     if (!upstream.ok) {
       console.error('Failed to fetch upstream HTML:', upstream.status, upstream.statusText);
       // Fallback to basic HTML with meta tags
@@ -425,7 +425,7 @@ exports.userMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
 </script>`;
 
     // Always serve full app with meta tags injected
-    const upstream = await fetch('https://ville-9fe9d.firebaseapp.com/index.html');
+    const upstream = await fetch('https://ville.social/index.html');
     let html = await upstream.text();
     html = html.replace(/<head[^>]*>/i, (match) => `${match}\n  ${head}\n`);
     
@@ -518,7 +518,7 @@ exports.videoMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
 </script>`;
 
     // Always serve full app with meta tags injected
-    const upstream = await fetch('https://ville-9fe9d.firebaseapp.com/index.html');
+    const upstream = await fetch('https://ville.social/index.html');
     let html = await upstream.text();
     html = html.replace(/<head[^>]*>/i, (match) => `${match}\n  ${head}\n`);
     
