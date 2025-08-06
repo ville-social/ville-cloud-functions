@@ -155,11 +155,11 @@ exports.processPreviewAssets = functions
       bucket.file('overlays/logo.png').download({ destination: logo })
     ]);
 
-    /* ── FFmpeg: orange background (#FF6400) + centred logo ── */
+    /* ── FFmpeg: scale video to cover 360x640 + centered logo overlay ── */
     const filter =
+      `[0]scale=360:640:force_original_aspect_ratio=increase,crop=360:640[vid];` +
       `[1]scale='min(360,iw)':'min(640,ih)'[lg];` +
-      `color=0xff6400:size=360x640:rate=10[bg];` +
-      `[bg][lg]overlay=(W-w)/2:(H-h)/2`;
+      `[vid][lg]overlay=(W-w)/2:(H-h)/2`;
 
     // MP4 trailer (≈2.5 s @ 10 fps)
     console.log(`[processPreviewAssets] Starting FFmpeg conversion: 2.5s @ 360x640 (9:16)`);
@@ -185,10 +185,14 @@ exports.processPreviewAssets = functions
     const processingTime = Date.now() - startTime;
     console.log(`[processPreviewAssets] FFmpeg completed in ${processingTime}ms`);
 
-    // JPG thumbnail (quality 4 ≈ 100–150 kB)
+    // JPG thumbnail from original video (quality 4 ≈ 100–150 kB)
     await new Promise((ok, bad) =>
       spawn(LOCAL_FFMPEG, [
-        '-i', mp4Out, '-frames:v', '1', '-q:v', '4', '-y', jpgOut
+        '-i', mp4In,  // Use original video, not the processed one
+        '-vf', 'scale=360:640:force_original_aspect_ratio=increase,crop=360:640',
+        '-frames:v', '1', 
+        '-q:v', '4', 
+        '-y', jpgOut
       ], { stdio: 'inherit' })
       .on('exit', code => code ? bad(new Error(`ffmpeg-jpg exit ${code}`)) : ok())
     );
