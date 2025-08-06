@@ -42,8 +42,8 @@ async function regenerateAllEventPreviews(testMode = false, daysBack = null) {
       console.log(`🗓️  Filtering events created after: ${cutoffDate.toISOString()}\n`);
       
       query = query
-        .where('created_time', '>=', admin.firestore.Timestamp.fromDate(cutoffDate))
-        .orderBy('created_time', 'desc')
+        .where('event_posted', '>=', admin.firestore.Timestamp.fromDate(cutoffDate))
+        .orderBy('event_posted', 'desc')
         .orderBy('event_video');
     } else {
       query = query.orderBy('event_video');
@@ -72,7 +72,7 @@ async function regenerateAllEventPreviews(testMode = false, daysBack = null) {
     console.log('📋 Sample events to be processed:');
     snapshot.docs.slice(0, 5).forEach(doc => {
       const data = doc.data();
-      const createdDate = data.created_time ? data.created_time.toDate().toLocaleDateString() : 'Unknown date';
+      const createdDate = data.event_posted ? data.event_posted.toDate().toLocaleDateString() : 'Unknown date';
       console.log(`   - ${data.event_title || 'Untitled'} (${data.eventID || doc.id}) - Created: ${createdDate}`);
     });
     if (snapshot.size > 5) {
