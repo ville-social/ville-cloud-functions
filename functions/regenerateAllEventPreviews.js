@@ -1,4 +1,5 @@
 /**
+  * Run in Google Cloud shell with: node regenerateAllEventPreviews.js --days 60
  * regenerateAllEventPreviews.js
  * 
  * Standalone script to regenerate event preview videos and images
@@ -236,3 +237,4 @@ Notes:
 
 // Run the regeneration
 regenerateAllEventPreviews(testMode, daysBack);
+
