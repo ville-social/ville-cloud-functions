@@ -320,7 +320,7 @@ exports.eventMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
 
     // Human browser – inject into SPA index.html
     console.log('Fetching upstream HTML');
-    const upstream = await fetch('https://ville.social/index.html');
+    const upstream = await fetch('https://ville-9fe9d.firebaseapp.com/index.html');
     let html       = await upstream.text();
     
     // Remove ALL duplicate meta tags
@@ -433,7 +433,7 @@ exports.userMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
     }
 
     // Human browser – inject into SPA
-    const upstream = await fetch('https://ville.social/index.html');
+    const upstream = await fetch('https://ville-9fe9d.firebaseapp.com/index.html');
     let html = await upstream.text();
     html = html.replace(/<head[^>]*>/i, (match) => `${match}\n  ${head}\n`);
     
@@ -535,7 +535,7 @@ exports.videoMeta = onRequest({ region: 'us-central1' }, async (req, res) => {
     }
 
     // Human browser – inject into SPA
-    const upstream = await fetch('https://ville.social/index.html');
+    const upstream = await fetch('https://ville-9fe9d.firebaseapp.com/index.html');
     let html = await upstream.text();
     html = html.replace(/<head[^>]*>/i, (match) => `${match}\n  ${head}\n`);
     
